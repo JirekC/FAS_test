@@ -1,0 +1,9 @@
+type:
+export CPLUS_INCLUDE_PATH=~/lib
+
+from FAS.cl library directory and FAS_test directory:
+g++ -c *.cpp
+will make object files
+
+from FAS_test directory:
+g++ -o FAS.exe FAS_test.o ~/lib/FAS.cl/*.o ~/lib/CL/OpenCL.lib

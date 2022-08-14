@@ -1,0 +1,31 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cppbuild",
+			"label": "C/C++: compile all",
+			"command": "g++.exe",
+			"args": [
+				"-g",
+				"*.cpp",
+				"../lib/FAS.cl/*.o",
+				"../lib/CL/OpenCL.lib",
+				"-o",
+				"FAS.exe", 
+				"-I.",
+				"-I../lib"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": [
+				"$gcc"
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "compiler: g++"
+		}
+	]
+}
