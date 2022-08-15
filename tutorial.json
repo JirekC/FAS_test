@@ -1,6 +1,6 @@
 {
     "name": "Tutorial Project",
-    "steps": 1000,
+    "steps": 100,
     "dt": 0.5e-6,
     "dx": 10e-3,
     "materials": [
@@ -23,8 +23,9 @@
     "fields": [
         {
             "name": "Small Room",
-            "calc_rms": true,
+            "calc_rms": false,
             "rms_window_file": "wfile.f32",
+            "rms_out_file": "rms.f32",
             "size": {
                 "x": 512,
                 "y": 512,
@@ -38,7 +39,7 @@
                     "position": {
                         "x": 0,
                         "y": 0,
-                        "z": 0
+                        "z": 128
                     },
                     "rotation": {
                         "z": 0,

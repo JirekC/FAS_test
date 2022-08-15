@@ -203,19 +203,22 @@ int main(int argc, char* argv[])
             if((val = jf["calc_rms"]).is_boolean())
             {
                 f->Prepare(val);
-                // load rms window from "rms_window_file"
-                std::ifstream rms_file;
-                rms_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-                try
+                if(val == true)
                 {
-                    rms_file.open(jf["rms_window_file"]);
-                    LoadF32FromFile(rms_file, f->rms_window);
-                    rms_file.close();
-                }
-                catch(const std::exception& e)
-                {
-                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: loading \"rms_window_file\":\n" + \
-                                            std::string(e.what()) + "\nCheck file-name");
+                    // load rms window from "rms_window_file"
+                    std::ifstream rms_file;
+                    rms_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+                    try
+                    {
+                        rms_file.open(jf["rms_window_file"]);
+                        LoadF32FromFile(rms_file, f->rms_window);
+                        rms_file.close();
+                    }
+                    catch(const std::exception& e)
+                    {
+                        throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: loading \"rms_window_file\":\n" + \
+                                                std::string(e.what()) + "\nCheck file-name");
+                    }
                 }
             }
             else
@@ -264,7 +267,6 @@ int main(int argc, char* argv[])
                 fas::vec3<double> rotation;
                 std::string file_name;
                 uint32_t store_every_nth_frame = 1;
-                fas::scanner scan;
 
                 // parse position, size and rotation
                 try
@@ -288,7 +290,7 @@ int main(int argc, char* argv[])
                     // no file name specified, use some default
                     file_name = "f" + std::to_string(fields.size()) + "s" + std::to_string(cntr) + "data.f32";
                 }
-                // try to parse how many frames to store
+                // try to parse how many frames to store (default is 1 - every frame)
                 if((val = jscan["store_every_nth_frame"]).is_number_unsigned())
                 {
                     store_every_nth_frame = val;
@@ -296,7 +298,8 @@ int main(int argc, char* argv[])
                         store_every_nth_frame = 1;
                 }
 
-                scan.Prepare(*f, position, rotation, size, file_name, store_every_nth_frame);
+                fas::scanner* scan = new fas::scanner(*f, position, rotation, size, file_name, store_every_nth_frame);
+                scanners.push_back(scan);
                 cntr++;
             }
 
@@ -371,7 +374,7 @@ int main(int argc, char* argv[])
     }
     catch(const std::exception& e)
     {
-        std::cerr << "ERR: Reading file \"" << argv[1] << "\": " << e.what() << '\n';
+        std::cerr << "ERR: Preparing scene from file \"" << argv[1] << "\": " << e.what() << '\n';
         exit(-1);
     }
     
@@ -402,27 +405,36 @@ int main(int argc, char* argv[])
         try {
             // all drivers here
             float signal;
-            signal = sin(2 * M_PI * time * freq);
+            signal = cos(2 * M_PI * time * freq);
 
             drv->Drive(signal);
             // ...
             drv->f->cl_queue.enqueueBarrierWithWaitList();
 
             // all scanners here
-    //        scan->Scan2devmem();
-            // ...
-            drv->f->cl_queue.enqueueBarrierWithWaitList();
-    //        scan->Scan2hostmem();
-            // ...
-            /**\todo remove Finish() after update "Scan2hostmem()" to store directly to file */
-            fields[0]->Finish(); // wait for all data stores to output file
+            for(auto s : scanners)
+            {
+                s->Scan2devmem();
+            }
+            for(auto f : fields)
+            {
+                f->cl_queue.enqueueBarrierWithWaitList();
+            }
+            for(auto s : scanners)
+            {
+                s->Scan2file();
+            }
 
             // launch sim. kernel for field(s)
-            fields[0]->SimStep();
-            // ...
-
-            // wait for finish of field(s) simulation
-            fields[0]->Finish();
+            for(auto f : fields)
+            {
+                f->SimStep();
+            }
+            // Finish all work before new iteration
+            for(auto f : fields)
+            {
+                f->Finish();
+            }
         }
         catch (std::exception& e) {
             std::cout << e.what() << "\nin simulation step: " << i << "\n";
@@ -460,6 +472,10 @@ int main(int argc, char* argv[])
 
     delete drv;
     delete dev;
+
+    // call destructors
+    // delete[] scanners.data();
+    // delete[] fields.data();
 
     std::cout << "Finished.\n";
     return 0;
