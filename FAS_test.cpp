@@ -4,7 +4,10 @@
 #include <vector>
 #include <cmath>
 #include "FAS.cl/fas.hpp"
-#include <nlohmann/json.hpp> // JSON parser for project files
+#include "nlohmann/json.hpp" // JSON parser for project files
+#include <stdlib.h> // system() call
+#include <unistd.h> // readlink()
+
 using json = nlohmann::json;
 
 template<typename T>
@@ -72,8 +75,19 @@ fas::vec2<T> parse_vec2(json jvec2)
     return ret_vec;
 }
 
+std::string getexepath()
+{
+    char result[ 1024 ];
+    ssize_t count = readlink( "/proc/self/exe", result, sizeof(result) );
+    std::string path( result, (count > 0) ? count : 0 );
+    size_t found = path.find_last_of("/\\");
+    path = path.substr(0,found);
+    return path;
+}
+
 int main(int argc, char* argv[])
 {
+    std::string exec_path = getexepath(); // path to executable of this process
     fas::device* dev; // TODO: allow use of multiple devices - each field can select GPU ...
     int sim_steps = 10e3; // total # of simulation steps
     fas::data_t dt; // time-step [sec]
@@ -85,8 +99,8 @@ int main(int argc, char* argv[])
 
     if (argc < 2)
     {
-        std::cout << "ERR: no input file.\n";
-        std::cout << "Using: FAS [project_file.json]\n";
+        std::cerr << "ERR: no input file.\n";
+        std::cerr << "Using: FAS [project_file.json]\n";
         exit(-1);
     }
 
@@ -111,16 +125,18 @@ int main(int argc, char* argv[])
     /*******************************************************/
     int plat_idx, dev_idx;
     std::cout << "Select platform (index): ";
-    std::cin >> plat_idx;
+//    std::cin >> plat_idx;
+plat_idx = 0;
     if (plat_idx < 0 || plat_idx >= platforms.size()) {
-        std::cout << "ERR: not valid platform index\n";
+        std::cerr << "ERR: not valid platform index\n";
         return -1;
     }
     platforms[plat_idx].getDevices(CL_DEVICE_TYPE_ALL, &devices);
     std::cout << "Select device from platform (index): ";
-    std::cin >> dev_idx;
+//    std::cin >> dev_idx;
+dev_idx = 0;
     if (dev_idx < 0 || dev_idx >= devices.size()) {
-        std::wcout << "ERR: not valid device index\n";
+        std::cerr << "ERR: not valid device index\n";
         return -1;
     }
 
@@ -131,7 +147,7 @@ int main(int argc, char* argv[])
         dev = new fas::device(devices[0], "../lib/FAS.cl/fas.cl");
     }
     catch (std::exception& e) {
-        std::cout << e.what() << std::endl;
+        std::cerr << e.what() << std::endl;
         return -1;
     }
 
@@ -149,7 +165,7 @@ int main(int argc, char* argv[])
         project_file.open(argv[1]);
         jproject = json::parse(project_file);
 
-        // overal project parameters
+        /*** overal project parameters ***/
         val = jproject["steps"];
         if(!val.is_number_unsigned()) throw std::runtime_error("A valid number of simulation steps was not specified");
         sim_steps = val;
@@ -163,7 +179,7 @@ int main(int argc, char* argv[])
         std::cout << "Maximum frequency (based on time-step): " << (0.5f / dt) << " Hz" << std::endl;
         std::cout << "Loading materials (Courant nr best bellow 0.577):" << std::endl;
 
-        // load & recalculate all materials used in project
+        /*** load & recalculate all materials used in project ***/
         for(auto jm : jproject["materials"])
         {
             fas::material m;
@@ -180,7 +196,7 @@ int main(int argc, char* argv[])
             throw std::runtime_error("No material specified, specify at least one");
         fas::material::Recalc(materials);
 
-        // load fields
+        /*** load fields ***/
         for(auto jf : jproject["fields"])
         {
             std::cout << "Creating new field: ";
@@ -197,7 +213,7 @@ int main(int argc, char* argv[])
                 throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: size is not specified:\n" + e.what());
             }
 
-            // init field
+            /*** init field ***/
             fas::field* f = new fas::field(*dev, size, dx, dt);
             f->materials = materials; // copy materials to field's private memory
             if((val = jf["calc_rms"]).is_boolean())
@@ -237,13 +253,13 @@ int main(int argc, char* argv[])
     /******************************/
     std::cout << "Creating driver(s).\n";
     try {
-        fas::object::CreateCylinder(*f, { 380,150,128 }, { 0, M_PI* 0.5, M_PI * 0.4/*72°*/}, {30,30,1}, 0x80); // 0x80 -> material.MSB is set, so object is transducer
+        fas::object::CreateCylinder(*f, { 380,150,128 }, { M_PI * 0.4/*72°*/, M_PI* 0.5, 0}, {30,30,1}, 0x80); // 0x80 -> material.MSB is set, so object is transducer
 
         drv = new fas::driver(*f);
         drv->CollectElements(); // CollectElements() will clear MSBs of all elements after collection complete
     }
     catch (std::exception& e) {
-        std::cout << e.what() << std::endl;
+        std::cerr << e.what() << std::endl;
         return -1;
     }
     // write driver's elements (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
@@ -258,7 +274,7 @@ int main(int argc, char* argv[])
 
 
             
-            // create scanners
+            /*** create scanners ***/
             cntr = 0;
             for( auto jscan : jf["scanners"] )
             {
@@ -303,7 +319,7 @@ int main(int argc, char* argv[])
                 cntr++;
             }
 
-            // create objects inside field
+            /*** create discrete objects inside field ***/
             f->Clear(); // restart all material_ids to #0
             cntr = 0;
             for( auto jo : jf["objects"] )
@@ -329,7 +345,7 @@ int main(int argc, char* argv[])
                 // parse material id
                 if(!(val = jo["material_id"]).is_number_unsigned())
                 {
-                    std::cout << "Field [" + std::to_string(fields.size()) + "]: " \
+                    std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
                         "object [" + std::to_string(cntr) + "]: \"material_id\" not specified - assuming #0\n";
                     mat_id = 0;
                 }
@@ -338,7 +354,7 @@ int main(int argc, char* argv[])
                     mat_id = val;
                     if(mat_id > 255)
                     {
-                        std::cout << "Field [" + std::to_string(fields.size()) + "]: " \
+                        std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
                             "object [" + std::to_string(cntr) + "]: \"material_id\" greater than 255 - #0 will be used instead\n";
                         mat_id = 0;
                     }
@@ -365,10 +381,57 @@ int main(int argc, char* argv[])
                 {
                     throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: object [" + std::to_string(cntr) + "]: unknown shape");
                 }
-
                 cntr++;
             }
             f->cl_queue.finish(); // wait for all work done (on device side)
+
+            /*** create .stl models inside field ***/
+            cntr = 0;
+            std::string path;
+            uint8_t mat_id;
+            std::string vox_file_name = "F" + std::to_string(fields.size()) + ".ui8";
+            std::string cmd_line = "../STL2VOX/STL2VOX";
+            cmd_line += " -o" + vox_file_name;
+            cmd_line += " -sx" + std::to_string(f->size.x);
+            cmd_line += " -sy" + std::to_string(f->size.y);
+            cmd_line += " -sz" + std::to_string(f->size.z);
+            for( auto jm : jf["models"] )
+            {
+                // parse path
+                if(!(val = jm["path"]).is_string())
+                {
+                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
+                        "model [" + std::to_string(cntr) + "]: \"path\" not specified\n");
+                }
+                path = val;
+                // parse material id
+                if(!(val = jm["material_id"]).is_number_unsigned())
+                {
+                    std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
+                        "model [" + std::to_string(cntr) + "]: \"material_id\" not specified - assuming #0\n";
+                    mat_id = 0;
+                }
+                else
+                {
+                    mat_id = val;
+                    if(mat_id > 255)
+                    {
+                        std::cerr  << "Field [" + std::to_string(fields.size()) + "]: " \
+                            "model [" + std::to_string(cntr) + "]: \"material_id\" greater than 255 - #0 will be used instead\n";
+                        mat_id = 0;
+                    }
+                }
+                cmd_line += " " + path;
+                cmd_line += " " + std::to_string(mat_id);
+                cntr++;
+            }
+            if(system(cmd_line.c_str()) != 0)
+            {
+                throw std::runtime_error("STL2VOX failed, check all model's path\n");
+            }
+            fas::object::LoadVoxelMap(*f, vox_file_name.c_str()); // load voxel map to GPU
+            f->cl_queue.finish(); // wait for all work done (on device side)
+
             fields.push_back(f);
         }
     }
@@ -377,8 +440,6 @@ int main(int argc, char* argv[])
         std::cerr << "ERR: Preparing scene from file \"" << argv[1] << "\": " << e.what() << '\n';
         exit(-1);
     }
-    
-
     
     fas::data_t freq = 5e3; // [Hz]
 
@@ -390,9 +451,6 @@ int main(int argc, char* argv[])
     // for (int i = 0; i < sim_steps; i++) {
     //     f->rms_window[i] = i < sim_steps - TN ? 0.0 : 1.0; // rectangular window
     // }
-
-    
-
 
     /****************************************/
     /*** run simulation - kernels in loop ***/
@@ -480,170 +538,3 @@ int main(int argc, char* argv[])
     std::cout << "Finished.\n";
     return 0;
 }
-
-
-
-/*
-* F.A.S.cl example program - box with one driver
-*/
-/*
-int main() {
-
-    int sim_steps = 20000;
-    fas::data_t dt = 0.5e-6; // [sec]
-    fas::data_t dx = 5e-3; // [m]
-    fas::data_t freq = 5e3; // [Hz]
-
-    // platforms & devices available in this system
-    std::vector<cl::Platform> platforms;
-    cl::Platform::get( &platforms );
-    // print platforms & devices info
-    for( auto &p : platforms ) {
-        std::cout << p.getInfo<CL_PLATFORM_NAME>() << std::endl;
-        std::vector<cl::Device> devices;
-        p.getDevices(CL_DEVICE_TYPE_ALL, &devices);
-        for (auto& d : devices) {
-            std::cout << "\t" << d.getInfo<CL_DEVICE_NAME>() << std::endl;
-            auto v = d.getInfo<CL_DEVICE_MAX_WORK_ITEM_SIZES>();
-            std::cout << "\t\tCL_DEVICE_MAX_WORK_ITEM_SIZES:" << v[0] << ", " << v[1] << ", " << v[2] << std::endl;
-         
-        }
-    }
-    std::cout << std::endl;
-    
-    // TODO select plat. / dev.
-    std::vector<cl::Device> devices;
-    platforms[0].getDevices(CL_DEVICE_TYPE_ALL, &devices);
-
-    // prepare device: compile program, create kernels
-    // prepare field: alloc memory on device, clear
-    fas::device* dev;
-    fas::field* f;
-    try {
-        dev = new fas::device(devices[0], "c:/lib/FAS.cl/fas.cl"); // TODO: copy fas.cl to same dir as executable and use relative path
-        f = new fas::field(*dev, { 500, 500, 1024 }, dx, dt);
-        f->materials.push_back({ 340.0, 12.256e-1, 0, 0, 0, 0 }); // Air
-        f->materials.push_back({ 970.0, 0.179, 0, 0, 0, 0 }); // He
-        f->materials.push_back({ 6400.0, 2700.0, 0, 0, 0, 0 }); // Al
-        fas::material::Recalc(*f);
-        f->Prepare(true);
-        f->Clear();
-    }
-    catch (std::string& text) {
-        std::cout << text << std::endl;
-        return -1; // авария :(
-    }
-
-    // define rms integration window
-    fas::data_t TN = 1.0 / freq / dt; // one period of signal in steps
-    f->rms_window.resize(sim_steps);
-    for (int i = 0; i < sim_steps; i++) {
-        f->rms_window[i] = i < sim_steps - TN ? 0.0 : 1.0;
-    }
-
-    // create rectangle driver
-    std::cout << "Create driver(s).\n";
-    fas::driver* drv;
-    try {
-        //fas::object::CreateRect(*f, { 60,60,50 }, { 0, 0, 0 }, { 80,80 }, 0x80); // 0x80 -> material.MSB is set, so object is transducer
-        fas::object::CreateCylinder(*f, { 250,250,100 }, { 0, 0, 0 }, { 20,20,1 }, 0x80); // 0x80 -> material.MSB is set, so object is transducer
-
-        drv = new fas::driver(*f);
-        drv->CollectElements(); // CollectElements() will clear MSBs of all elements ofter collection complete
-    }
-    catch (std::string& text) {
-        std::cout << text << std::endl;
-        return -1; // авария :(
-    }
-    // write driver's elements (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
-    FILE* driverf = fopen("driver", "wb");
-    uint64_t tmp_ne = drv->num_elements; // one can merge more than one driver into one file
-    fwrite(&tmp_ne, sizeof(uint64_t), 1, driverf);
-    fwrite(drv->GetElementsCoords().data(), sizeof(uint32_t), drv->num_elements * 3, driverf);
-    fclose(driverf);
-
-    // create scanner
-    std::cout << "Create scanner(s).\n";
-    fas::scanner* scan;
-    try {
-        fas::object::CreateRect(*f, { 250,0,0 }, { 0,-0.5 * M_PI,0 }, { 1024,512 }, 0x80);
-        fas::object::CreateRect(*f, { 0,250,0 }, { 0, 0, 0.5 * M_PI }, { 512,1024 }, 0x80);
-        scan = new fas::scanner(*f);
-        scan->CollectElements();
-    }
-    catch (std::string& text) {
-        std::cout << text << std::endl;
-        return -1; // авария :(
-    }
-
-    // define some objects from different material here
-    std::cout << "Create other objects(s).\n";
-    fas::object::CreateBox(*f, { 150,220,100 }, { 0,0,0 }, { 200,60,1 }, 0x02);
-    fas::object::CreateCylinder(*f, { 250,250,100 }, { 0, 0, 0 }, { 21,21,1 }, 0x00);
-    fas::object::CreateBox(*f, { 150,220,50 }, { 0,0,0 }, { 200,60,1 }, 0x02);
-    fas::object::CreateBox(*f, { 150,220,50 }, { 0,0,0 }, { 200,1,50 }, 0x02);
-    fas::object::CreateBox(*f, { 150,220,50 }, { 0,0,0 }, { 1,60,50 }, 0x02);
-    fas::object::CreateBox(*f, { 350,220,50 }, { 0,0,0 }, { 1,60,50 }, 0x02);
-    fas::object::CreateBox(*f, { 150,280,50 }, { 0,0,0 }, { 200,1,50 }, 0x02);
-
-    // open storage for writing simulation outputs (pressure in each element of scanner)
-    FILE* dataf = fopen("data0", "wb");
-    // write header (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
-    tmp_ne = scan->num_elements;
-    fwrite(&tmp_ne, sizeof(uint64_t), 1, dataf);
-    fwrite(scan->GetElementsCoords().data(), sizeof(uint32_t), scan->num_elements * 3, dataf);
-
-    // run kernels in loop
-    fas::data_t time = 0.0;
-    for (int i = 0; i < sim_steps; i++, time += f->dt) {
-        printf("\rsimulation step: %i/%i (%f sec)", i + 1, sim_steps, time);
-
-        // all drivers here
-        drv->Drive(1.0 * sin(2 * M_PI * time * freq) );
-        // ...
-        drv->f->Finish();
-
-        // all scanners here
-        scan->Scan2devmem();
-        // ...
-        scan->f->Finish();
-        scan->Scan2hostmem();
-        // ...
-
-        // launch sim. kernel(s)
-        f->SimStep();
-
-        // in meantime of simulation, store data
-        fwrite(scan->data, sizeof(fas::data_t), scan->num_elements, dataf);
-
-        // wait for simulation kernel(s) finish
-        f->Finish();
-    }
-
-    std::cout << std::endl;
-    fclose(dataf);
-
-    std::cout << "Calculate RMS.\n";
-    // all fields with RMS here
-    f->FinishRms();
-    // ...
-    f->Finish();
-
-    // store 3D array of RMS
-    fas::data_t * rms = f->Map_rms_read();
-    FILE* rmsf = fopen("rms0", "wb");
-    // write header
-    fwrite(&(f->size.x), sizeof(uint32_t), 1, rmsf);
-    fwrite(&(f->size.y), sizeof(uint32_t), 1, rmsf);
-    fwrite(&(f->size.z), sizeof(uint32_t), 1, rmsf);
-    fwrite(rms, sizeof(fas::data_t), (size_t)f->size.x* f->size.y* f->size.z, rmsf);
-    fclose(rmsf);
-
-    delete scan;
-    delete drv;
-    delete f;
-    delete dev;
-
-    std::cout << std::endl;
-    return 0;
-}*/

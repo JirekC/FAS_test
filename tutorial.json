@@ -1,6 +1,6 @@
 {
     "name": "Tutorial Project",
-    "steps": 100,
+    "steps": 20000,
     "dt": 0.5e-6,
     "dx": 10e-3,
     "materials": [
@@ -55,7 +55,7 @@
             "objects": [
                 {
                     "shape": "box",
-                    "material_id": 1,
+                    "material_id": 0,
                     "position": {
                         "x": 0,
                         "y": 200,
@@ -71,6 +71,16 @@
                         "y": 312,
                         "z": 256
                     }
+                }
+            ],
+            "models": [
+                {
+                    "path": "../plate.stl",
+                    "material_id": 2
+                },
+                {
+                    "path": "../test_model.stl",
+                    "material_id": 1
                 }
             ]
         }
