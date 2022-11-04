@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
     fas::data_t dx; // space-step [m]
     std::vector<fas::material> materials; // all used materials - common for whole project
     std::vector<fas::field*> fields; // simulation fields - TODO: connect together by boundaries ...
-    fas::driver* drv; // TODO: predelat na vector
+    std::vector<fas::driver*> drivers; // drivers from all fields together
     std::vector<fas::scanner*> scanners; // scanners from all fields together
 
     if (argc < 2)
@@ -206,7 +206,7 @@ dev_idx = 0;
             fas::vec3<uint32_t> size;
             try
             {
-                size = parse_vec3<uint32_t>(jf["size"]);
+                size = parse_vec3<double>(jf["size"]) * (1.0 / dx); // load size in [m] and recalc to simulation units
             }
             catch(const std::exception& e)
             {
@@ -243,31 +243,64 @@ dev_idx = 0;
             }
             f->Clear();
 
-            // TODO: drivers
+            /*** create drivers ***/
+            cntr = 1;
+            {
+                std::string vox_file_name = "F" + std::to_string(fields.size()) + "_drv.ui8";
+                std::string cmd_line = "../STL2VOX/STL2VOX";
+                cmd_line += " -o" + vox_file_name;
+                cmd_line += " -sx" + std::to_string(f->size.x); // in [elements]
+                cmd_line += " -sy" + std::to_string(f->size.y);
+                cmd_line += " -sz" + std::to_string(f->size.z);
+                cmd_line += " -dx" + std::to_string(dx); // size of single element
+                for( auto jdriver : jf["drivers"] )
+                {
+                    // parse path
+                    if(!(val = jdriver["model"]).is_string())
+                    {
+                        throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
+                            "driver [" + std::to_string(cntr - 1) + "]: \"model\" not specified\n");
+                    }
+                    cmd_line += " " + std::string(val);
+                    cmd_line += " " + std::to_string(cntr); // material identifier used to identify individual drivers
 
-
+                    cntr++;
+                }
+                if(system(cmd_line.c_str()) != 0)
+                {
+                    throw std::runtime_error("STL2VOX failed, check all driver's path\n");
+                }
+                fas::object::LoadVoxelMap(*f, vox_file_name.c_str()); // load voxel map to GPU
+                for(int i = 1; i < cntr; i++) {
+                    fas::driver *drv = new fas::driver(*f);
+                    drv->CollectElements(i);
+                    drivers.push_back(drv);
+                }
+                f->Clear();
+                f->cl_queue.finish(); // wait for all work done (on device side)
+            }
 
 
     /******************************/
     /*** create circular driver ***/
     /******************************/
-    std::cout << "Creating driver(s).\n";
-    try {
-        fas::object::CreateCylinder(*f, { 380,150,128 }, { M_PI * 0.4/*72°*/, M_PI* 0.5, 0}, {30,30,1}, 0x80); // 0x80 -> material.MSB is set, so object is transducer
+    // std::cout << "Creating driver(s).\n";
+    // try {
+    //     fas::object::CreateCylinder(*f, { 380,150,128 }, { M_PI * 0.4/*72°*/, M_PI* 0.5, 0.0}, {30,30,1}, 0x80); // 0x80 -> material.MSB is set, so object is transducer
 
-        drv = new fas::driver(*f);
-        drv->CollectElements(); // CollectElements() will clear MSBs of all elements after collection complete
-    }
-    catch (std::exception& e) {
-        std::cerr << e.what() << std::endl;
-        return -1;
-    }
-    // write driver's elements (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
-    FILE* driverf = fopen("driver", "wb"); // driver de
-    uint64_t tmp_ne = drv->num_elements; // one can merge more than one driver into one file
-    fwrite(&tmp_ne, sizeof(uint64_t), 1, driverf);
-    fwrite(drv->GetElementsCoords().data(), sizeof(uint32_t), drv->num_elements * 3, driverf);
-    fclose(driverf);
+    //     drv = new fas::driver(*f);
+    //     drv->CollectElements(); // CollectElements() will clear MSBs of all elements after collection complete
+    // }
+    // catch (std::exception& e) {
+    //     std::cerr << e.what() << std::endl;
+    //     return -1;
+    // }
+    // // write driver's elements (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
+    // FILE* driverf = fopen("driver", "wb"); // driver de
+    // uint64_t tmp_ne = drv->num_elements; // one can merge more than one driver into one file
+    // fwrite(&tmp_ne, sizeof(uint64_t), 1, driverf);
+    // fwrite(drv->GetElementsCoords().data(), sizeof(uint32_t), drv->num_elements * 3, driverf);
+    // fclose(driverf);
 
 
 
@@ -287,9 +320,12 @@ dev_idx = 0;
                 // parse position, size and rotation
                 try
                 {
-                    position = parse_vec3<uint32_t>(jscan["position"]);
-                    size = parse_vec2<uint32_t>(jscan["size"]);
                     rotation = parse_vec3<double>(jscan["rotation"]);
+                    // load and recalc position and size from meters to simulation units
+                    position = parse_vec3<double>(jscan["position"]) * (1.0 / dx);
+                    size = parse_vec2<double>(jscan["size"]) * (1.0 / dx);
+                    // std::cout<< "Scanner position: " << std::to_string(position.x) << ", " << std::to_string(position.y) << ", " << std::to_string(position.z) << "\n";
+                    // std::cout<< "Scanner size: " << std::to_string(size.x) << ", " << std::to_string(size.y) << "\n";
                 }
                 catch(const std::exception& e)
                 {
@@ -319,118 +355,55 @@ dev_idx = 0;
                 cntr++;
             }
 
-            /*** create discrete objects inside field ***/
-            f->Clear(); // restart all material_ids to #0
-            cntr = 0;
-            for( auto jo : jf["objects"] )
-            {
-                fas::vec3<uint32_t> position;
-                fas::vec3<uint32_t> size;
-                fas::vec3<double> rotation;
-                uint mat_id;
-
-                // parse position, size and rotation
-                try
-                {
-                    position = parse_vec3<uint32_t>(jo["position"]);
-                    size = parse_vec3<uint32_t>(jo["size"]);
-                    rotation = parse_vec3<double>(jo["rotation"]);
-                }
-                catch(const std::exception& e)
-                {
-                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
-                        "object [" + std::to_string(cntr) + "]: position, size or rotation vector has invalid format");
-                }
-
-                // parse material id
-                if(!(val = jo["material_id"]).is_number_unsigned())
-                {
-                    std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
-                        "object [" + std::to_string(cntr) + "]: \"material_id\" not specified - assuming #0\n";
-                    mat_id = 0;
-                }
-                else
-                {
-                    mat_id = val;
-                    if(mat_id > 255)
-                    {
-                        std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
-                            "object [" + std::to_string(cntr) + "]: \"material_id\" greater than 255 - #0 will be used instead\n";
-                        mat_id = 0;
-                    }
-                }
-
-                // parse shape & create object, all shaped are 3D and filled
-                if(!(val = jo["shape"]).is_string())
-                {
-                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: object [" + std::to_string(cntr) + "]: shape not specified");
-                }
-                if(val == "box")
-                {
-                    fas::object::CreateBox(*f, position, rotation, size, mat_id);
-                }
-                else if(val == "cylinder")
-                {
-                    fas::object::CreateCylinder(*f, position, rotation, size, mat_id);
-                }
-                else if(val == "ellipsoid")
-                {
-                    fas::object::CreateEllipsoid(*f, position, rotation, size, mat_id);
-                }
-                else
-                {
-                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: object [" + std::to_string(cntr) + "]: unknown shape");
-                }
-                cntr++;
-            }
-            f->cl_queue.finish(); // wait for all work done (on device side)
-
             /*** create .stl models inside field ***/
             cntr = 0;
-            std::string path;
-            uint8_t mat_id;
-            std::string vox_file_name = "F" + std::to_string(fields.size()) + ".ui8";
-            std::string cmd_line = "../STL2VOX/STL2VOX";
-            cmd_line += " -o" + vox_file_name;
-            cmd_line += " -sx" + std::to_string(f->size.x);
-            cmd_line += " -sy" + std::to_string(f->size.y);
-            cmd_line += " -sz" + std::to_string(f->size.z);
-            for( auto jm : jf["models"] )
             {
-                // parse path
-                if(!(val = jm["path"]).is_string())
+                std::string path;
+                uint8_t mat_id;
+                std::string vox_file_name = "F" + std::to_string(fields.size()) + ".ui8";
+                std::string cmd_line = "../STL2VOX/STL2VOX";
+                cmd_line += " -o" + vox_file_name;
+                cmd_line += " -sx" + std::to_string(f->size.x); // in [elements]
+                cmd_line += " -sy" + std::to_string(f->size.y);
+                cmd_line += " -sz" + std::to_string(f->size.z);
+                cmd_line += " -dx" + std::to_string(dx); // size of single element
+                for( auto jmodel : jf["models"] )
                 {
-                    throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
-                        "model [" + std::to_string(cntr) + "]: \"path\" not specified\n");
-                }
-                path = val;
-                // parse material id
-                if(!(val = jm["material_id"]).is_number_unsigned())
-                {
-                    std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
-                        "model [" + std::to_string(cntr) + "]: \"material_id\" not specified - assuming #0\n";
-                    mat_id = 0;
-                }
-                else
-                {
-                    mat_id = val;
-                    if(mat_id > 255)
+                    // parse path
+                    if(!(val = jmodel["path"]).is_string())
                     {
-                        std::cerr  << "Field [" + std::to_string(fields.size()) + "]: " \
-                            "model [" + std::to_string(cntr) + "]: \"material_id\" greater than 255 - #0 will be used instead\n";
+                        throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
+                            "model [" + std::to_string(cntr) + "]: \"path\" not specified\n");
+                    }
+                    path = val;
+                    // parse material id
+                    if(!(val = jmodel["material_id"]).is_number_unsigned())
+                    {
+                        std::cerr << "Field [" + std::to_string(fields.size()) + "]: " \
+                            "model [" + std::to_string(cntr) + "]: \"material_id\" not specified - assuming #0\n";
                         mat_id = 0;
                     }
+                    else
+                    {
+                        mat_id = val;
+                        if(mat_id > 255)
+                        {
+                            std::cerr  << "Field [" + std::to_string(fields.size()) + "]: " \
+                                "model [" + std::to_string(cntr) + "]: \"material_id\" greater than 255 - #0 will be used instead\n";
+                            mat_id = 0;
+                        }
+                    }
+                    cmd_line += " " + path;
+                    cmd_line += " " + std::to_string(mat_id);
+                    cntr++;
                 }
-                cmd_line += " " + path;
-                cmd_line += " " + std::to_string(mat_id);
-                cntr++;
+                if(system(cmd_line.c_str()) != 0)
+                {
+                    throw std::runtime_error("STL2VOX failed, check all model's path\n");
+                }
+                fas::object::LoadVoxelMap(*f, vox_file_name.c_str()); // load voxel map to GPU
+                f->cl_queue.finish(); // wait for all work done (on device side)
             }
-            if(system(cmd_line.c_str()) != 0)
-            {
-                throw std::runtime_error("STL2VOX failed, check all model's path\n");
-            }
-            fas::object::LoadVoxelMap(*f, vox_file_name.c_str()); // load voxel map to GPU
-            f->cl_queue.finish(); // wait for all work done (on device side)
 
             fields.push_back(f);
         }
@@ -465,9 +438,15 @@ dev_idx = 0;
             float signal;
             signal = cos(2 * M_PI * time * freq);
 
-            drv->Drive(signal);
-            // ...
-            drv->f->cl_queue.enqueueBarrierWithWaitList();
+            // all drivers here
+            for(auto d : drivers)
+            {
+                d->Drive(signal);
+            }
+            for(auto f : fields)
+            {
+                f->cl_queue.enqueueBarrierWithWaitList();
+            }
 
             // all scanners here
             for(auto s : scanners)
@@ -528,7 +507,6 @@ dev_idx = 0;
     //     fclose(rmsf);
     // }
 
-    delete drv;
     delete dev;
 
     // call destructors

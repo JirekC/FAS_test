@@ -24,14 +24,20 @@
         {
             "name": "Small Room",
             "calc_rms": false,
-            "rms_window_file": "wfile.f32",
+            "rms_window_file": "rmswinfile.f32",
             "rms_out_file": "rms.f32",
             "size": {
-                "x": 512,
-                "y": 512,
-                "z": 256
+                "x": 5.12,
+                "y": 5.12,
+                "z": 2.56
             },
-            "drivers": [],
+            "drivers": [
+                {
+                    "model": "../driver1.stl",
+                    "wave": "../driver1.wav",
+                    "amplify": -1.5
+                }
+            ],
             "scanners": [
                 {
                     "out_file": "data0.f32",
@@ -39,7 +45,7 @@
                     "position": {
                         "x": 0,
                         "y": 0,
-                        "z": 128
+                        "z": 1.28
                     },
                     "rotation": {
                         "z": 0,
@@ -47,29 +53,8 @@
                         "x": 0
                     },
                     "size": {
-                        "x": 512,
-                        "y": 512
-                    }
-                }
-            ],
-            "objects": [
-                {
-                    "shape": "box",
-                    "material_id": 0,
-                    "position": {
-                        "x": 0,
-                        "y": 200,
-                        "z": 0
-                    },
-                    "rotation": {
-                        "z": 0,
-                        "y": 0,
-                        "x": 0
-                    },
-                    "size": {
-                        "x": 512,
-                        "y": 312,
-                        "z": 256
+                        "x": 5.12,
+                        "y": 5.12
                     }
                 }
             ],
