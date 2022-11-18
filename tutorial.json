@@ -36,6 +36,11 @@
                     "model": "../driver1.stl",
                     "wave": "../driver1.wav",
                     "amplify": -1.5
+                },
+				{
+                    "model": "../driver2.stl",
+                    "wave": "../driver1.wav",
+                    "amplify": -1.5
                 }
             ],
             "scanners": [

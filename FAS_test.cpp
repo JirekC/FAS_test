@@ -1,4 +1,5 @@
 ﻿#include <iostream>
+#include <iostream>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -280,33 +281,6 @@ dev_idx = 0;
                 f->cl_queue.finish(); // wait for all work done (on device side)
             }
 
-
-    /******************************/
-    /*** create circular driver ***/
-    /******************************/
-    // std::cout << "Creating driver(s).\n";
-    // try {
-    //     fas::object::CreateCylinder(*f, { 380,150,128 }, { M_PI * 0.4/*72°*/, M_PI* 0.5, 0.0}, {30,30,1}, 0x80); // 0x80 -> material.MSB is set, so object is transducer
-
-    //     drv = new fas::driver(*f);
-    //     drv->CollectElements(); // CollectElements() will clear MSBs of all elements after collection complete
-    // }
-    // catch (std::exception& e) {
-    //     std::cerr << e.what() << std::endl;
-    //     return -1;
-    // }
-    // // write driver's elements (uint64_t num of elements, element's coordinates - format: { x0, x1 ... xn, y1 .. yn, z1 .. zn }
-    // FILE* driverf = fopen("driver", "wb"); // driver de
-    // uint64_t tmp_ne = drv->num_elements; // one can merge more than one driver into one file
-    // fwrite(&tmp_ne, sizeof(uint64_t), 1, driverf);
-    // fwrite(drv->GetElementsCoords().data(), sizeof(uint32_t), drv->num_elements * 3, driverf);
-    // fclose(driverf);
-
-
-
-
-
-            
             /*** create scanners ***/
             cntr = 0;
             for( auto jscan : jf["scanners"] )
