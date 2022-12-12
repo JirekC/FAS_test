@@ -1,0 +1,70 @@
+{
+    "name": "Tutorial Project",
+    "steps": 10000,
+    "dt": 0.5e-6,
+    "dx": 10e-3,
+    "materials": [
+        {
+            "name": "Air",
+            "c": 340,
+            "ro": 1.2256
+        },
+        {
+            "name": "He",
+            "c": 970,
+            "ro": 0.179
+        },
+        {
+            "name": "Al-check it !",
+            "c": 6400,
+            "ro": 2700
+        }
+    ],
+    "fields": [
+        {
+            "name": "Small Room",
+            "calc_rms": false,
+            "rms_window_file": "example/rmswinfile.f32",
+            "rms_out_file": "example/F0_rms.f32",
+            "size": {
+                "x": 5.12,
+                "y": 5.12,
+                "z": 2.56
+            },
+            "drivers": [
+                {
+                    "model": "example/driver1.stl",
+                    "fs" : 44100,
+                    "signal": "example/driver_5kHz.raw",
+                    "gain": 1.5
+                }
+            ],
+            "scanners": [
+                {
+                    "out_file": "example/data0.f32",
+                    "store_every_nth_frame": 10,
+                    "position": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 1.28
+                    },
+                    "rotation": {
+                        "z": 0,
+                        "y": 0,
+                        "x": 0
+                    },
+                    "size": {
+                        "x": 5.12,
+                        "y": 5.12
+                    }
+                }
+            ],
+            "models": [
+                {
+                    "path": "example/He.stl",
+                    "material_id": 1
+                }
+            ]
+        }
+    ]
+}
