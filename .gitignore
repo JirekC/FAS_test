@@ -1,6 +1,4 @@
-rms0
-FAS.exe.stackdump
-FAS_test.o
-driver
+*.stackdump
+*.o
 *.f32
 *.ui8

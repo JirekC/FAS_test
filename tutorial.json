@@ -1,6 +1,6 @@
 {
     "name": "Tutorial Project",
-    "steps": 20000,
+    "steps": 10000,
     "dt": 0.5e-6,
     "dx": 10e-3,
     "materials": [
@@ -25,7 +25,7 @@
             "name": "Small Room",
             "calc_rms": false,
             "rms_window_file": "rmswinfile.f32",
-            "rms_out_file": "rms.f32",
+            "rms_out_file": "F0_rms.f32",
             "size": {
                 "x": 5.12,
                 "y": 5.12,
@@ -34,13 +34,9 @@
             "drivers": [
                 {
                     "model": "../driver1.stl",
-                    "wave": "../driver1.wav",
-                    "amplify": -1.5
-                },
-				{
-                    "model": "../driver2.stl",
-                    "wave": "../driver1.wav",
-                    "amplify": -1.5
+					"fs" : 44100,
+                    "signal": "../driver1.f32",
+                    "gain": 1.5
                 }
             ],
             "scanners": [
@@ -65,11 +61,7 @@
             ],
             "models": [
                 {
-                    "path": "../plate.stl",
-                    "material_id": 2
-                },
-                {
-                    "path": "../test_model.stl",
+                    "path": "../He.stl",
                     "material_id": 1
                 }
             ]

@@ -6,8 +6,8 @@
 #include <cmath>
 #include "FAS.cl/fas.hpp"
 #include "nlohmann/json.hpp" // JSON parser for project files
-#include <stdlib.h> // system() call
-#include <unistd.h> // readlink()
+#include <unistd.h> // readlink(), exec()
+#include <sys/wait.h> // waitpid()
 
 using json = nlohmann::json;
 
@@ -86,11 +86,43 @@ std::string getexepath()
     return path;
 }
 
+int exec_ext_wait(std::string cmd, std::vector<std::string>args)
+{
+    int ret_val = -1;
+    pid_t pid;
+    int status;
+    std::vector<char*> args_p;
+
+    for( auto arg : args )
+    {
+        args_p.push_back(const_cast<char*>(arg.c_str()));
+    }
+    args_p.push_back(NULL); // The array of pointers must be terminated by a null pointer.
+
+    if ((pid = fork()) == 0) {
+        // child process because return value zero
+        execv(cmd.c_str(), args_p.data());
+        // no return here
+    } else if (pid < 0) {
+        // error
+        ret_val -1;
+    } else {
+        // parent process
+        waitpid(pid, &status, 0);
+        if(WIFEXITED(status)) {
+            ret_val = WEXITSTATUS(status);
+        }
+        ret_val -1; // abnormal exit of child process
+    }
+
+    return ret_val;
+}
+
 int main(int argc, char* argv[])
 {
     std::string exec_path = getexepath(); // path to executable of this process
     fas::device* dev; // TODO: allow use of multiple devices - each field can select GPU ...
-    int sim_steps = 10e3; // total # of simulation steps
+    int sim_steps; // total # of simulation steps
     fas::data_t dt; // time-step [sec]
     fas::data_t dx; // space-step [m]
     std::vector<fas::material> materials; // all used materials - common for whole project
@@ -126,16 +158,14 @@ int main(int argc, char* argv[])
     /*******************************************************/
     int plat_idx, dev_idx;
     std::cout << "Select platform (index): ";
-//    std::cin >> plat_idx;
-plat_idx = 0;
+    std::cin >> plat_idx;
     if (plat_idx < 0 || plat_idx >= platforms.size()) {
         std::cerr << "ERR: not valid platform index\n";
         return -1;
     }
     platforms[plat_idx].getDevices(CL_DEVICE_TYPE_ALL, &devices);
     std::cout << "Select device from platform (index): ";
-//    std::cin >> dev_idx;
-dev_idx = 0;
+    std::cin >> dev_idx;
     if (dev_idx < 0 || dev_idx >= devices.size()) {
         std::cerr << "ERR: not valid device index\n";
         return -1;
@@ -222,7 +252,7 @@ dev_idx = 0;
                 f->Prepare(val);
                 if(val == true)
                 {
-                    // load rms window from "rms_window_file"
+                    // load rms window from file
                     std::ifstream rms_file;
                     rms_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
                     try
@@ -245,15 +275,19 @@ dev_idx = 0;
             f->Clear();
 
             /*** create drivers ***/
+            std::cout << "\tdrivers...\n";
             cntr = 1;
             {
                 std::string vox_file_name = "F" + std::to_string(fields.size()) + "_drv.ui8";
-                std::string cmd_line = "../STL2VOX/STL2VOX";
-                cmd_line += " -o" + vox_file_name;
-                cmd_line += " -sx" + std::to_string(f->size.x); // in [elements]
-                cmd_line += " -sy" + std::to_string(f->size.y);
-                cmd_line += " -sz" + std::to_string(f->size.z);
-                cmd_line += " -dx" + std::to_string(dx); // size of single element
+                std::string cmd = "../STL2VOX/STL2VOX";
+                std::vector<std::string> args;
+                args.push_back(cmd); // first argument is executable-name
+                args.push_back("-o" + vox_file_name);
+                args.push_back("-sx" + std::to_string(f->size.x)); // in [elements]
+                args.push_back("-sy" + std::to_string(f->size.y));
+                args.push_back("-sz" + std::to_string(f->size.z));
+                args.push_back("-dx" + std::to_string(dx)); // size of single element
+                // load all models and convert to voxel map
                 for( auto jdriver : jf["drivers"] )
                 {
                     // parse path
@@ -262,18 +296,46 @@ dev_idx = 0;
                         throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
                             "driver [" + std::to_string(cntr - 1) + "]: \"model\" not specified\n");
                     }
-                    cmd_line += " " + std::string(val);
-                    cmd_line += " " + std::to_string(cntr); // material identifier used to identify individual drivers
-
+                    args.push_back(std::string(val));
+                    args.push_back(std::to_string(cntr)); // material identifier used to identify individual drivers
                     cntr++;
                 }
-                if(system(cmd_line.c_str()) != 0)
+                if(exec_ext_wait(cmd, args) != 0)
                 {
+					//std::cout << errno << "\n";
                     throw std::runtime_error("STL2VOX failed, check all driver's path\n");
                 }
                 fas::object::LoadVoxelMap(*f, vox_file_name.c_str()); // load voxel map to GPU
-                for(int i = 1; i < cntr; i++) {
+                // create driver structures and load driving signals
+                for(int i = 1; i < cntr; i++)
+                {
                     fas::driver *drv = new fas::driver(*f);
+                    fas::data_t gain = 1.0f; // default gain is 1.0
+
+                    auto jdriver = jf["drivers"][i - 1];
+                    if((val = jdriver["gain"]).is_number()) {
+                        gain = val; // different gain specified
+                    }
+                    if(!(val = jdriver["fs"]).is_number()) {
+                        throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " \
+                            "driver [" + std::to_string(i) + "]: \"fs\" (aka sampling frequency of drive-signal) not specified\n");
+                    }
+                    drv->sig_samp_freq = val;
+                    // load signal from file
+                    std::ifstream sig_file;
+                    sig_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+                    try
+                    {
+                        sig_file.open(jdriver["signal"]);
+                        LoadF32FromFile(sig_file, drv->signal);
+                        sig_file.close();
+                    }
+                    catch(const std::exception& e)
+                    {
+                        throw std::runtime_error("Field [" + std::to_string(fields.size()) + "]: " + \
+                            "driver [" + std::to_string(i) + "]: \"signal\" (drive-signal file) not specified or reading error\n");
+                    }
+                    
                     drv->CollectElements(i);
                     drivers.push_back(drv);
                 }
@@ -282,6 +344,7 @@ dev_idx = 0;
             }
 
             /*** create scanners ***/
+            std::cout << "\tscanners...\n";
             cntr = 0;
             for( auto jscan : jf["scanners"] )
             {
@@ -332,15 +395,18 @@ dev_idx = 0;
             /*** create .stl models inside field ***/
             cntr = 0;
             {
+                std::cout << "\tmodels...\n";
                 std::string path;
-                uint8_t mat_id;
+                unsigned int mat_id;
                 std::string vox_file_name = "F" + std::to_string(fields.size()) + ".ui8";
-                std::string cmd_line = "../STL2VOX/STL2VOX";
-                cmd_line += " -o" + vox_file_name;
-                cmd_line += " -sx" + std::to_string(f->size.x); // in [elements]
-                cmd_line += " -sy" + std::to_string(f->size.y);
-                cmd_line += " -sz" + std::to_string(f->size.z);
-                cmd_line += " -dx" + std::to_string(dx); // size of single element
+                std::string cmd = "../STL2VOX/STL2VOX";
+                std::vector<std::string> args;
+                args.push_back(cmd); // first argument is executable-name
+                args.push_back("-o" + vox_file_name);
+                args.push_back("-sx" + std::to_string(f->size.x)); // in [elements]
+                args.push_back("-sy" + std::to_string(f->size.y));
+                args.push_back("-sz" + std::to_string(f->size.z));
+                args.push_back("-dx" + std::to_string(dx)); // size of single element
                 for( auto jmodel : jf["models"] )
                 {
                     // parse path
@@ -367,11 +433,11 @@ dev_idx = 0;
                             mat_id = 0;
                         }
                     }
-                    cmd_line += " " + path;
-                    cmd_line += " " + std::to_string(mat_id);
+                    args.push_back(path);
+                    args.push_back(std::to_string(mat_id));
                     cntr++;
                 }
-                if(system(cmd_line.c_str()) != 0)
+                if(exec_ext_wait(cmd, args) != 0)
                 {
                     throw std::runtime_error("STL2VOX failed, check all model's path\n");
                 }
@@ -388,7 +454,7 @@ dev_idx = 0;
         exit(-1);
     }
     
-    fas::data_t freq = 5e3; // [Hz]
+    // fas::data_t freq = 2.5e3; // [Hz]
 
     /*************************************/
     /*** define rms integration window ***/
@@ -409,13 +475,13 @@ dev_idx = 0;
 
         try {
             // all drivers here
-            float signal;
-            signal = cos(2 * M_PI * time * freq);
+            // float signal;
+            // signal = cos(2 * M_PI * time * freq);
 
             // all drivers here
             for(auto d : drivers)
             {
-                d->Drive(signal);
+                d->Drive(time);
             }
             for(auto f : fields)
             {
